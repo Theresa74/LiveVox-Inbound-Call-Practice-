@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Inbound Voice Roleplay – Adult & Child</title>
+
+<style>
+body { font-family: Arial; background:#f4f6f8; padding:20px; }
+button { padding:10px; margin:5px; }
+
+.score {
+  background:#e8f5e9;
+  padding:10px;
+  border-radius:8px;
+  font-weight:bold;
+  margin-bottom:6px;
+}
+
+.qa {
+  background:#fff3cd;
+  border:1px solid #ffeeba;
+  padding:10px;
+  border-radius:8px;
+  margin-bottom:8px;
+}
+
+.listen-indicator {
+  background:#e3f2fd;
+  border:1px solid #90caf9;
+  padding:8px;
+  border-radius:6px;
+  font-weight:bold;
+  margin-bottom:12px;
+}
+
+.lvx {
+  background:#ffffff;
+  border:2px solid #1f4e79;
+  border-radius:10px;
+  padding:15px;
+  margin-bottom:15px;
+}
+
+.grid {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:10px;
+}
+
+.item {
+  background:#eef3fb;
+  padding:8px;
+  border-radius:6px;
+}
+
+.chat {
+  background:white;
+  border:1px solid #ccc;
+  border-radius:10px;
+  padding:10px;
+  height:380px;
+  overflow-y:auto;
+}
+
+.caller { background:#e0e0e0; padding:8px; border-radius:8px; margin:6px; }
+.sos { background:#4a90e2; color:white; padding:8px; border-radius:8px; margin:6px; margin-left:auto; }
+</style>
+</head>
+
+<body>
+
+<h2>📞 Inbound Voice Roleplay – Adult & Child</h2>
+
+<div class="score">QA Score: <span id="score">100</span> / 100</div>
+<div class="qa" id="qa">Click Start Call to begin.</div>
+<div class="listen-indicator" id="listenStatus">✅ Ready</div>
+
+<button onclick="startCall()">▶ Start Call</button>
+<button onclick="resetCall()">🔄 Reset Call</button>
+<button id="speakBtn" onclick="listen()">🎤 Speak</button>
+<button onclick="stop()">⏹ Stop</button>
+
+<div class="lvx" id="lvx" style="display:none;">
+  <div class="grid">
+    <div class="item"><strong>Type</strong> <span id="type"></span></div>
+    <div class="item"><strong>Name</strong> <span id="name"></span></div>
+    <div class="item"><strong>Phone</strong> <span id="phone"></span></div>
+    <div class="item"><strong>Member ID</strong> <span id="member"></span></div>
+    <div class="item"><strong>Health Plan</strong> <span id="plan"></span></div>
+  </div>
+</div>
+
+<div class="chat" id="chat"></div>
+
+<script>
+// ===== PROFILES WITH UPDATED HEALTH PLAN NAMES =====
+const profiles = [
+  { type:"Adult", name:"Paul Kiss", member:"1351876", phone:"569-633-2258", plan:"AMHP", fullName:"Amerigroup", altName: "Amerigroup", dob:"05/19/2000", address:"123 Forest Road Lansing Michigan 48911" },
+  { type:"Adult", name:"George Franks", member:"1351875", phone:"695-336-9669", plan:"AGWA", fullName:"Amerigroup", altName: "Amerigroup", dob:"10/02/1999", address:"123 Main Street Lansing Michigan 48911" },
+  { type:"Adult", name:"Perry Kent", member:"1351878", phone:"326-996-5656", plan:"AGNY", fullName:"Amerigroup", altName: "Amerigroup", dob:"08/01/2000", address:"1598 Green Road Cleveland Ohio 44103" },
+  { type:"Adult", name:"Kelly Moose", member:"1351879", phone:"366-955-5252", plan:"ALAM", fullName:"Almeda", altName: "Almeda", dob:"10/02/1989", address:"6986 Lincoln Cleveland Ohio 44103" },
+
+  { type:"Child", name:"Angela Green", member:"1351531", phone:"740-740-7408", plan:"MOFLO", fullName:"Molina", altName: "Molina Florida", dob:"04/21/2020", address:"4743 Park Avenue Hialeah Hawaii 19486" },
+  { type:"Child", name:"Virginia Phillips", member:"1351533", phone:"446-446-4471", plan:"MOFLO", fullName:"Molina", altName: "Molina Florida", dob:"04/21/2020", address:"9643 River Road Springfield Michigan 29285" },
+  { type:"Child", name:"Linda Jones", member:"1351534", phone:"155-155-1556", plan:"MOFLO", fullName:"Molina", altName: "Molina Florida", dob:"04/21/2020", address:"13486 North Escondido New Mexico 36971" }
+];
+
+const guardians = ["Maria Thompson","David Wilson","Angela Brooks"];
+
+let active=null, step=0, score=100, recog, transcript="", callReason="";
+let isListening = false;
+let penalizedSteps = [];
+
+const chatBox = document.getElementById("chat");
+const listenStatus = document.getElementById("listenStatus");
+const speakBtn = document.getElementById("speakBtn");
+const lvx = document.getElementById("lvx");
+const qa = document.getElementById("qa");
+
+// ===== VOICE =====
+function speak(text){
+  speechSynthesis.cancel();
+  speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+}
+function speakCaller(text){
+  speak(text);
+  addMessage("Caller: "+text,"caller");
+}
+
+// ===== UI =====
+function addMessage(text, cls){
+  const d=document.createElement("div");
+  d.className=cls;
+  d.innerText=text;
+  chatBox.appendChild(d);
+  chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+// ===== ERROR OVERLAY =====
+function showError(reason, script){
+  if (!penalizedSteps.includes(step)) {
+    penalizedSteps.push(step);
+    score -= 20;
+    if (score < 0) score = 0;
+    document.getElementById("score").innerText = score;
+  }
+  qa.innerHTML =
+    `❌ Error Encountered (-20 Points)<br><strong>Reason:</strong> ${reason}<br><strong>Correct script pattern:</strong><br>"${script}"`;
+  speak(`Points not given. ${reason}.`);
+}
+
+// ===== START / RESET =====
+function startCall(){
+  resetCall();
+  active = profiles[Math.floor(Math.random()*profiles.length)];
+  callReason = Math.random()<0.5 ? "letter" : "callback";
+  step = 1;
+
+  lvx.style.display="block";
+  document.getElementById("type").innerText=active.type;
+  document.getElementById("name").innerText=active.name;
+  document.getElementById("phone").innerText=active.phone;
+  document.getElementById("member").innerText=active.member;
+  document.getElementById("plan").innerText=active.plan;
+
+  qa.innerText="✅ LiveVox loaded. Begin your greeting.";
+}
+
+function resetCall(){
+  if (recog) {
+    recog.onend = null;
+    recog.stop();
+  }
+  chatBox.innerHTML="";
+  score=100;
+  step=0;
+  penalizedSteps = [];
+  document.getElementById("score").innerText=100;
+  qa.innerText="Click Start Call to begin.";
+  lvx.style.display="none";
+  listenStatus.innerText="✅ Ready";
+  speakBtn.disabled=false;
+  isListening = false;
+}
+
+// ===== SPEECH =====
+function listen(){
+  if(isListening) return;
+  isListening = true;
+  listenStatus.innerText="🔴 Listening… (Press Stop when finished)";
+  speakBtn.disabled=true;
+
+  transcript="";
+  recog = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+  
+  recog.continuous = true;
+  recog.interimResults = false;
+
+  recog.onresult = e => {
+    let currentResult = "";
+    for (let i = e.resultIndex; i < e.results.length; ++i) {
+      if (e.results[i].isFinal) {
+        currentResult += e.results[i][0].transcript;
+      }
+    }
+    transcript += " " + currentResult;
+  };
+
+  recog.onend = () => {
+    isListening = false;
+    listenStatus.innerText="✅ Ready";
+    speakBtn.disabled = false;
+    
+    let cleanTranscript = transcript.trim().toLowerCase().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g,"");
+    cleanTranscript = cleanTranscript.replace(/\b1st\b/g, "first");
+    
+    if(cleanTranscript !== "") {
+      handle(cleanTranscript);
+    } else {
+      qa.innerText = "⚠️ No speech detected. Please try clicking 'Speak' again.";
+    }
+  };
+
+  recog.onerror = e => {
+    console.error("Speech error: ", e.error);
+    stop();
+  };
+
+  recog.start();
+}
+
+function stop(){
+  if(!recog || !isListening) return;
+  recog.stop(); 
+}
+
+// ===== FLOW LOGIC =====
+function handle(t){
+  addMessage("SOS: "+t,"sos");
+
+  // Step 1: Greeting
+  if(step===1){
+    const hasThankYou = t.includes("thank you") || t.includes("thanks");
+    const hasCentauri = t.includes("centauri") || t.includes("centari") || t.includes("century") || t.includes("solutions");
+    const hasHelp = t.includes("how may i help you") || t.includes("how can i help you") || t.includes("may i help you");
+
+    if(!hasThankYou || !hasCentauri || !hasHelp){
+      showError("Greeting standard or company brand name omitted.", "Thank you for calling Centauri Health Solutions. This is [Name]. How may I help you?");
+      return;
+    }
+
+    speakCaller(callReason==="letter"?"I received a letter.":"I am returning a call.");
+    step = callReason==="letter"?2:3;
+    return;
+  }
+
+  // Step 2: Member ID request
+  if(step===2){
+    if(!t.includes("member")){
+      showError("Member ID not requested.","Can you please provide the member number located in the upper right corner of the letter?");
+      return;
+    }
+    speakCaller("The member ID is "+active.member+".");
+    step=3;
+    return;
+  }
+
+  // Step 3: Recording disclosure & Account Verification Check
+  if(step===3){
+    const hasRecordingStatement = t.includes("please be advised") && t.includes("recorded line") && t.includes("quality assurance purposes");
+    
+    if(!hasRecordingStatement){
+      showError("Mandatory quality assurance disclosure statement is missing or altered.", "Please be advised we are on a recorded line for quality assurance purposes.");
+      return;
+    }
+
+    if(active.type==="Child"){
+      step = 4;
+      if(t.includes("first and last name") && (t.includes("on behalf of") || t.includes("calling about") || t.includes("calling on behalf"))){
+        // continuous flow
+      } else {
+        return; 
+      }
+    } else {
+      const hasNameCheck = t.includes("first") && t.includes("last name");
+      const hasDOBCheck = t.includes("date of birth") || t.includes("dob") || t.includes("birth");
+      const hasAddressCheck = t.includes("mailing address") || t.includes("address");
+
+      if(!hasNameCheck || !hasDOBCheck || !hasAddressCheck){
+        showError("Verification check details missing from the statement.", "Please be advised we are on a recorded line for quality assurance purposes. Before we get into too much detail can you please verify your 1st & last name, date of birth and full mailing address?");
+        return;
+      }
+
+      speakCaller("My name is " + active.name + ", date of birth " + active.dob + ", and address " + active.address + ".");
+      step=6; 
+      return;
+    }
+  }
+
+  // Step 4: Third party verification (Child path)
+  if(step===4){
+    const hasNamesRequested = t.includes("first and last name");
+    const hasRelationRequested = t.includes("on behalf of") || t.includes("calling about") || t.includes("child you are calling");
+
+    if(!hasNamesRequested || !hasRelationRequested){
+      showError("Guardian validation details omitted.", "Before we get into too much detail, may I have your first and last name as well as the name of the child you are calling on behalf of [or: calling about]?");
+      return;
+    }
+    speakCaller(guardians[Math.floor(Math.random()*guardians.length)] + ", calling on behalf of " + active.name + ".");
+    step=5;
+    return;
+  }
+
+  // Step 5: Child Demographics Verification
+  if(step===5){
+    const spokenDOB = t.includes("date of birth") || t.includes("date") || t.includes("birth") || t.includes("dob");
+    const spokenAddress = t.includes("mailing address") || t.includes("address") || t.includes("street") || t.includes("live");
+    const hasChildTerm = t.includes("child") || t.includes("daughter") || t.includes("son");
+    
+    if(!spokenDOB || !spokenAddress || !hasChildTerm){
+      showError("Child security and verification string validation failed.", "For security purposes can you please verify your child's [or daughter/son's], date of birth and full mailing address?");
+      return;
+    }
+    
+    speakCaller("My child's name is " + active.name + ", date of birth " + active.dob + ", and address " + active.address + ".");
+    step=6;
+    return;
+  }
+
+  // Step 6: Callback Phone confirmation
+  if(step===6){
+    if(!t.includes("phone")){
+      showError("Phone number not requested.","Finally, can you please verify the phone number we have on file?");
+      return;
+    }
+    speakCaller(active.phone);
+    step=7;
+    return;
+  }
+
+  // Step 7: Closing Disclosure with Highly Forgiving Verification
+  if(step===7){
+    const hasContracted = t.includes("contracted") || t.includes("centauri") || t.includes("solutions");
+    const hasExperience = t.includes("eligibility") || t.includes("enrollment") || t.includes("experience") || t.includes("30 years");
+    
+    // Completely flexible catch-all for variations including speech engine typos like "two", "make", etc.
+    const hasCash = t.includes("cash") || t.includes("assistance") || t.includes("qualify") || t.includes("individuals");
+    const hasVoluntary = t.includes("voluntary") || t.includes("participate");
+
+    const correctPlanFull = active.fullName.toLowerCase();
+    const correctPlanAlt = active.altName.toLowerCase();
+    
+    // Confirms they said the right brand somewhere in the message block
+    const hasCorrectPlanFullName = t.includes(correctPlanFull) || t.includes(correctPlanAlt) || t.includes("molina");
+
+    // Block cross-contamination checks from triggering on "thank you" or background speech loops
+    let mentionsWrongPlan = false;
+    profiles.forEach(p => {
+      const otherAbbr = p.plan.toLowerCase();
+      const otherFull = p.fullName.toLowerCase();
+      
+      if (active.plan !== "MOFLO" && active.plan !== "AMHP" && otherAbbr !== active.plan.toLowerCase() && t.includes(otherAbbr)) {
+        mentionsWrongPlan = true;
+      }
+    });
+
+    let hasCorrectEnding = false;
+    let expectedPatternText = "";
+
+    if (active.type === "Adult") {
+      hasCorrectEnding = t.includes("benefits") && (t.includes("not change") || t.includes("choose not"));
+      expectedPatternText = "Centauri Health Solutions has been contracted by " + active.fullName + " to help see if certain members may qualify for more benefits. We have over 30 years of eligibility enrollment experience. These benefits can give cash assistance to individuals who may qualify. Participation in the program is voluntary, and your benefits will not change if you choose not to participate.";
+    } else {
+      hasCorrectEnding = t.includes("benefits") && (t.includes("not change") || t.includes("choose not"));
+      expectedPatternText = "Centauri Health Solutions has been contracted by " + active.fullName + " [or " + active.altName + "] to help see if certain members may qualify for more benefits. We have over 30 years of eligibility enrollment experience. These benefits can give cash assistance to individuals who may qualify. Participation in the program is voluntary, and your child’s benefits will not change if you choose not to participate.";
+    }
+
+    if (mentionsWrongPlan || !hasCorrectPlanFullName) {
+      showError("Incorrect Health Plan name spoken. You must state the specific full plan name belonging to this profile (" + active.fullName + " or " + active.altName + ").", expectedPatternText);
+      return;
+    }
+
+    if(!hasContracted || !hasExperience || !hasCash || !hasVoluntary || !hasCorrectEnding){
+      showError("Closing script omitted or incomplete.", expectedPatternText);
+      return;
+    }
+    
+    speakCaller("Thank you for providing that information.");
+    qa.innerHTML = `🏁 Call complete! Final Adjusted Grade Score: <strong>${score} / 100</strong>.`;
+  }
+}
+</script>
+
+</body>
+</html>
